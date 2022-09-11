@@ -1,0 +1,125 @@
+---
+title: "Longitudinal Coefficient Tree Regression Vignette"
+author: "Özge Sürer, Daniel Apley, Edward Malthouse"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Longitudinal Vignette}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+# Introduction
+
+The use of longitudinal data sets leads to massively high-dimensional multivariate regression models because each single predictor (aka, covariate) over time and/or space must be treated as a large number of predictor variables in the regression model. Discovering unknown group structure automatically from the data is fundamentally important since the group structure leads to simple, parsimonious and interpretable models. This vignette describes the usage of longitudinal coefficient tree regression (LCTR) in `R`. See the Surer et. al. (2022) reference paper listed below for details. 
+
+We consider the linear regression model (the general version, with ungrouped coefficients) with $n$ sampling units and $p$ predictors, each of which is measured at the same $L$ time points:
+\begin{align}
+\begin{split}
+\mathbf{y}  = &\beta_{1,1}\mathbf{x}_{1,1} + \cdots + \beta_{L,1}\mathbf{x}_{L,1} + \\ & \beta_{1,2} \mathbf{x}_{1,2} + \cdots + \beta_{L,2}\mathbf{x}_{L,2} + \cdots + \\ & \beta_{1,p} \mathbf{x}_{1,p} + \cdots + \beta_{L,p}\mathbf{x}_{L,p} + \boldsymbol{\epsilon},
+\end{split}
+\end{align}
+where $\mathbf{y} = \big[y_1, y_{2}, \ldots, y_{n}\big]^\mathsf{T}$, $\mathbf{x}_{t,j} = [x_{1,t,j}, x_{2,t,j}, \ldots, x_{n,t,j}]^\mathsf{T}$ for $t = 1, \ldots, L$ (our convention is that time $t = L$ corresponds to most recent, and time $t = 1$ to most distant) and $j = 1, \ldots, p$, and $\boldsymbol{\epsilon}$ are length-$n$ vectors of the response observations, the predictor observations, and the independent and identically distributed noise with a constant variance, respectively. 
+
+# Installation
+
+```{r}
+library(LongCTR)
+```
+
+# Longitudinal Coefficient Tree Regression (LCTR)
+
+## Description
+
+`LongCTR` sequentially adds derived predictors (the sum of predictors in groups) to the model. This process continues until we obtain a final set of derived predictors satisfying the termination criterion. Users might pick a value `Kmax` up front for the total number of levels in the fitted LCTR tree at termination. Alternatively, the best model size can be chosen using K-fold cross validation (CV). Users may change the `cv` option depending on their preferences. If CV is used, a user must select `Kmax` as the upper bound on the best model size. The default is `Kmax = 20`. However, in some cases a better model might be obtained with `Kmax > 20`. In this case, the warm-start feature allows users to input the existing `LongCTR` object to the continuation of the `LongCTR`.
+
+## Usage
+
+`LongCTR(X, L, y, Kmax=5, cv=0, warm.start=NULL)`
+
+## Arguments
+
+Input | Definition |
+|------|----------------------------------------------------------------|
+`L`    | Time points
+`X`    | The $n \times (p \times L)$ design matrix of predictor observations to which the LCTR is fit. |
+`y`    | The $n$ dimensional vector of the response observations. |
+`Kmax` | A numeric scalar that specifies the upper bound on the best model size. If `cv = 0`, it specifies the model size at termination. |
+`cv`   | A numeric scalar that specifies the number of folds used in $K$-fold CV. If `cv = 0`, the argument allows users to fit the LCTR model with `Kmax` derived predictors at termination without using CV. |
+`warm.start` | If `NULL`, start fitting LCTR model from scratch. Otherwise, input object of class `longCTR` for the use of warm-start strategy. |
+
+## Example (without CV)
+
+We generate a dataset with $p = 3$, $L = 10$ and $n = 1,500$, where $\mathbf{X}$ is the $n \times (p \times L)$ design matrix of predictor observations and $\mathbf{y}$ is the $n$ dimensional vector of the response observations. We use this dataset throughout the vignette:
+
+```{r}
+#Generate some data
+set.seed(1234)
+p <- 3
+L <- 10
+n <- 1500 
+X <- scale(matrix(rnorm(n * p * L), nrow = n))
+
+beta <- c(0, 0, 0, 0, 3, 3, 3, 3.5, 3.5, 3.5,
+          0, 0, 0, 0, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
+          1, 1, 1, 1, 3, 3 ,3 , 3.2, 3.2, 3.2)
+
+sigmasq <- ((1/0.9) - 1)*(t(beta)%*%cov(X)%*%beta)
+y <- X %*% beta + rnorm(n, mean = 0, sd = sqrt(sigmasq))
+```
+
+We first illustrate the usage of the most basic call to `LongCTR` without using CV. As mentioned above `LongCTR` requires a termination criterion that represents the number of levels in the tree at termination. The best model size can be obtained via $K$-fold CV. However, in some situations, users might want to obtain only the prespecified number of levels instead of finding the best model size via CV. 
+
+In this example, we set `cv = 0` and `Kmax = 5` assuming that we can obtain an interpretable and accurate model with 5 levels in the tree structure at termination.  
+
+```{r}
+#Fit LongCTR model
+LCTR.fit <- LongCTR(X, L, y, Kmax=5, cv=0, warm.start=NULL)
+```
+
+```{r}
+#Summarize the fitted LongCTR model
+summary.grpstr(LCTR.fit$groupstrlist)
+```
+As mentioned above LCTR results in a highly-interpretable tree structure representing the sequence of group structures produced after each iteration. The hierarchical nature of the LCTR provides insight into the importance of the predictors, their higher-level grouping structures, and how they relate to each other. `print` displays a visual representation of the fitted LCTR object as follows:
+```{r}
+print.grpstr(LCTR.fit$groupstrlist, L=10, K=5)
+```
+```{r, fig.width=7, fig.height=7}
+print.tree(LCTR.fit$groupstrlist, K=5)
+```
+
+Predictions can be made based on the fitted `LongCTR` object. `newdata` is for the new input matrix.
+
+```{r}
+yhat <- predict.groupstr(LCTR.fit$groupstr, newdata=X[1:5,])
+yhat
+```
+
+# LCTR with Cross-Validation
+
+## Description
+
+`LongCTR` requires a termination criterion to determine the number of derived predictors in the model at termination. Note that the model size is the only tuning parameter for LCTR, and this can be chosen using $K$-fold CV. If `cv > 1`, the package performs $K$-fold CV, where $K$ = `cv`, to find the best model size, and then fits the final `LCTR` model of this chosen size using all the data. In CV, a user must select an upper bound `Kmax` on the best model size.
+
+## Usage
+
+`LongCTR(X, y, Kmax = 20, cv = 10, warm.start = NULL)`
+
+## Example (with CV)
+
+We still act on the sample data loaded before. In this example, we set `cv = 10` to perform 10-fold CV. We use `Kmax = 20` as an upper bound on the total number of derived predictors at termination. 
+
+
+```{r}
+cvLCTR.fit <- LongCTR(X, L, y, Kmax=20, cv=10, warm.start=NULL)
+```
+
+
